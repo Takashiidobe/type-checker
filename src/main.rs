@@ -1,25 +1,15 @@
 use type_checker::*;
 
 fn main() {
-    let f = Expr::Value(Value::Fn(
-        "sum".to_string(),
-        vec![1.0.into(), 2.0.into()],
-        Type::Number,
-    ));
-    let s = Expr::Op(Op::Binary(Binary::Add(Value::from(1.0), Value::from(2.0))));
+    let set_x = Expr::SetVar("x".to_string(), Box::new(Value::from(10.0)));
 
-    let x = Expr::Op(Op::Binary(Binary::Add(
-        Value::from("Lol"),
-        Value::from("Wat"),
-    )));
+    let add_10_to_x = Expr::Op(Box::new(Op::Binary(Binary::Add(
+        Expr::GetVar("y".to_string()),
+        Expr::Value(Value::Number(10.0)),
+    ))));
 
-    let z = Expr::Op(Op::Binary(Binary::Add(
-        Value::from(vec![1.0.into()]),
-        Value::from(vec![2.0.into()]),
-    )));
+    let mut program = Program::from(vec![set_x, add_10_to_x]);
 
-    dbg!(f.check());
-    dbg!(s.check());
-    dbg!(x.check());
-    dbg!(z.check());
+    dbg!(program.check());
+    dbg!(program);
 }

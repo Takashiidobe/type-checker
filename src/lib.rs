@@ -1,31 +1,33 @@
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub enum Value {
-    Number(f64),
-    Bool(bool),
-    String(String),
-    List(Vec<Value>),
-    Var(Box<Value>, Type),
-    Fn(String, Vec<Value>, Type),
-}
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Unary {
-    Plus(Value),
-    Minus(Value),
+    Plus(Expr),
+    Minus(Expr),
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Binary {
-    Add(Value, Value),
-    Sub(Value, Value),
-    Mul(Value, Value),
-    Div(Value, Value),
+    Add(Expr, Expr),
+    Sub(Expr, Expr),
+    Mul(Expr, Expr),
+    Div(Expr, Expr),
+    Eq(Expr, Expr),
+    Ne(Expr, Expr),
+    Gte(Expr, Expr),
+    Gt(Expr, Expr),
+    Lt(Expr, Expr),
+    Lte(Expr, Expr),
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Expr {
-    Op(Op),
+    Op(Box<Op>),
     Value(Value),
+    SetVar(String, Box<Value>),
+    GetVar(String),
+    Fn(String, Vec<Value>, Type),
+    Expr(Box<Expr>),
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
@@ -41,6 +43,189 @@ pub enum Type {
     Bool,
     String,
     List,
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub enum Value {
+    Number(f64),
+    Bool(bool),
+    String(String),
+    List(Vec<Value>),
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Env {
+    vars: HashMap<String, Value>,
+}
+
+impl Env {
+    pub fn get(&self, var: &str) -> Option<Value> {
+        self.vars.get(var).cloned()
+    }
+
+    pub fn set(&mut self, var: &str, val: Value) {
+        self.vars.insert(var.to_string(), val);
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Program {
+    body: Vec<Expr>,
+    env: Env,
+}
+
+impl From<Expr> for Program {
+    fn from(value: Expr) -> Self {
+        Self {
+            body: vec![value],
+            env: Env::default(),
+        }
+    }
+}
+
+impl From<Vec<Expr>> for Program {
+    fn from(value: Vec<Expr>) -> Self {
+        Self {
+            body: value,
+            env: Env::default(),
+        }
+    }
+}
+
+impl Program {
+    fn expr_to_value(&self, expr: Expr) -> Value {
+        match expr {
+            Expr::Op(_) => todo!(),
+            Expr::Value(value) => value,
+            Expr::SetVar(_, value) => *value,
+            Expr::GetVar(name) => self.get_var(&name),
+            Expr::Fn(_, _, _) => todo!(),
+            Expr::Expr(expr) => self.expr_to_value(*expr),
+        }
+    }
+
+    fn bin_op_to_type(&self, bin_op: Binary) -> Type {
+        match bin_op {
+            Binary::Add(_, _)
+            | Binary::Sub(_, _)
+            | Binary::Mul(_, _)
+            | Binary::Div(_, _)
+            | Binary::Eq(_, _)
+            | Binary::Ne(_, _)
+            | Binary::Gte(_, _)
+            | Binary::Gt(_, _)
+            | Binary::Lt(_, _)
+            | Binary::Lte(_, _) => Type::Bool,
+        }
+    }
+
+    fn unary_op_to_type(&self, unary_op: Unary) -> Type {
+        match unary_op {
+            Unary::Plus(expr) => match expr {
+                Expr::Op(op) => match *op {
+                    Op::Unary(unary) => match unary {
+                        Unary::Plus(_) | Unary::Minus(_) => Type::Number,
+                    },
+                    Op::Binary(binary) => self.bin_op_to_type(binary),
+                },
+                Expr::Value(v) => v.into(),
+                Expr::GetVar(name) => self.get_var(&name).into(),
+                Expr::Fn(_, _, t) => t,
+                Expr::Expr(expr) => self.expr_to_value(*expr).into(),
+                Expr::SetVar(_, _) => todo!(),
+            },
+            Unary::Minus(expr) => match expr {
+                Expr::Op(op) => match *op {
+                    Op::Unary(unary) => match unary {
+                        Unary::Plus(_) | Unary::Minus(_) => Type::Number,
+                    },
+                    Op::Binary(binary) => self.bin_op_to_type(binary),
+                },
+                Expr::Value(v) => v.into(),
+                Expr::GetVar(name) => self.get_var(&name).into(),
+                Expr::Fn(_, _, t) => t,
+                Expr::Expr(expr) => self.expr_to_value(*expr).into(),
+                Expr::SetVar(_, _) => todo!(),
+            },
+        }
+    }
+
+    fn op_to_type(&self, op: Op) -> Type {
+        match op {
+            Op::Unary(unary) => self.unary_op_to_type(unary),
+            Op::Binary(binary) => self.bin_op_to_type(binary),
+        }
+    }
+
+    fn expr_to_type(&self, expr: Expr) -> Type {
+        match expr {
+            Expr::Fn(_, _, t) => t,
+            Expr::Op(op) => self.op_to_type(*op),
+            _ => self.expr_to_value(expr).into(),
+        }
+    }
+
+    fn get_var(&self, name: &str) -> Value {
+        self.env
+            .get(name)
+            .unwrap_or_else(|| panic!("Could not find var: {}", name))
+    }
+
+    pub fn check(&mut self) -> bool {
+        for expr in &self.body {
+            let typ = match expr {
+                Expr::Op(op) => self.op_to_type(*op.clone()),
+                Expr::Value(value) => Type::from(value.clone()),
+                Expr::SetVar(name, v) => {
+                    self.env.set(name, *v.clone());
+                    Type::from(*v.clone())
+                }
+                Expr::GetVar(name) => self.get_var(name).into(),
+                Expr::Fn(_, _, t) => t.clone(),
+                Expr::Expr(expr) => self.expr_to_type(*expr.clone()),
+            };
+            if typ == Type::Invalid {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl From<Value> for Type {
+    fn from(value: Value) -> Type {
+        match value {
+            Value::Number(_) => Type::Number,
+            Value::Bool(_) => Type::Bool,
+            Value::String(_) => Type::String,
+            Value::List(_) => Type::List,
+        }
+    }
+}
+
+impl From<Type> for Value {
+    fn from(t: Type) -> Value {
+        match t {
+            Type::Invalid => panic!("Cannot convert invalid type to value"),
+            Type::Number => Value::Number(0.0),
+            Type::Bool => Value::Bool(false),
+            Type::String => Value::String("".to_string()),
+            Type::List => Value::List(vec![]),
+        }
+    }
+}
+
+use std::fmt;
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Number(n) => write!(f, "{}", n),
+            Value::Bool(b) => write!(f, "{}", b),
+            Value::String(s) => write!(f, "{}", s),
+            Value::List(l) => write!(f, "{:?}", l),
+        }
+    }
 }
 
 impl From<String> for Value {
@@ -82,19 +267,6 @@ impl From<Value> for f64 {
     }
 }
 
-impl From<Value> for Type {
-    fn from(value: Value) -> Self {
-        match value {
-            Value::Number(_) => Self::Number,
-            Value::Bool(_) => Self::Bool,
-            Value::String(_) => Self::String,
-            Value::List(_) => Self::List,
-            Value::Var(_, t) => t,
-            Value::Fn(_, _, t) => t,
-        }
-    }
-}
-
 trait SumValue {
     fn sum(&self) -> f64;
 }
@@ -109,81 +281,5 @@ impl SumValue for Vec<Value> {
             }
         }
         res
-    }
-}
-
-impl Expr {
-    pub fn eval(&self) -> Value {
-        use Value::*;
-        match self {
-            Expr::Op(op) => match op {
-                Op::Unary(unary) => match unary {
-                    Unary::Plus(_) => todo!(),
-                    Unary::Minus(_) => todo!(),
-                },
-                Op::Binary(binary) => match binary {
-                    Binary::Add(_, _) => todo!(),
-                    Binary::Sub(_, _) => todo!(),
-                    Binary::Mul(_, _) => todo!(),
-                    Binary::Div(_, _) => todo!(),
-                },
-            },
-            Expr::Value(value) => match value {
-                Number(_) | Bool(_) | String(_) | List(_) => value.clone(),
-                Var(v, _) => *v.to_owned(),
-                Fn(name, args, _) => match name.as_str() {
-                    "sum" => Number(args.sum()),
-                    _ => panic!("Unsupported method called"),
-                },
-            },
-        }
-    }
-
-    pub fn check(&self) -> Type {
-        use Value::*;
-        match self {
-            Expr::Op(op) => match op {
-                Op::Unary(unary) => match unary {
-                    Unary::Plus(value) => match value {
-                        Number(_) => Type::Number,
-                        List(_) | Bool(_) | String(_) | Var(_, _) | Fn(_, _, _) => Type::Invalid,
-                    },
-                    Unary::Minus(value) => match value {
-                        Number(_) => Type::Number,
-                        List(_) | Bool(_) | String(_) | Var(_, _) | Fn(_, _, _) => Type::Invalid,
-                    },
-                },
-                Op::Binary(binary) => match binary {
-                    Binary::Add(left, right) => match (left, right) {
-                        (Number(_), Number(_)) => Type::Number,
-                        (String(_), String(_)) => Type::String,
-                        (List(_), List(_)) => Type::List,
-                        _ => Type::Invalid,
-                    },
-                    Binary::Sub(left, right) => match (left, right) {
-                        (Number(_), Number(_)) => Type::Number,
-                        _ => Type::Invalid,
-                    },
-                    Binary::Mul(left, right) => match (left, right) {
-                        (Number(_), Number(_)) => Type::Number,
-                        (String(_), Number(_)) => Type::String,
-                        (List(_), Number(_)) => Type::List,
-                        _ => Type::Invalid,
-                    },
-                    Binary::Div(left, right) => match (left, right) {
-                        (Number(_), Number(_)) => Type::Number,
-                        _ => Type::Invalid,
-                    },
-                },
-            },
-            Expr::Value(value) => match value {
-                Number(_) | Bool(_) | String(_) | List(_) => Type::from(value.clone()),
-                Var(_, typ) => typ.clone(),
-                Fn(name, _, typ) => match name.as_str() {
-                    "sum" => typ.clone(),
-                    _ => panic!("Unsupported method called"),
-                },
-            },
-        }
     }
 }
