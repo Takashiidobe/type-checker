@@ -93,71 +93,58 @@ impl From<Vec<Expr>> for Program {
 }
 
 impl Program {
-    fn expr_to_value(&self, expr: Expr) -> Value {
+    fn expr_to_value(&mut self, expr: Expr) -> Value {
         match expr {
             Expr::Op(_) => todo!(),
             Expr::Value(value) => value,
-            Expr::SetVar(_, value) => *value,
+            Expr::SetVar(name, value) => {
+                self.set_var(&name, *value.clone());
+                *value
+            }
             Expr::GetVar(name) => self.get_var(&name),
             Expr::Fn(_, _, _) => todo!(),
             Expr::Expr(expr) => self.expr_to_value(*expr),
         }
     }
 
-    fn bin_op_to_type(&self, bin_op: Binary) -> Type {
+    fn bin_op_to_type(&mut self, bin_op: Binary) -> Type {
         match bin_op {
-            Binary::Add(_, _)
-            | Binary::Sub(_, _)
-            | Binary::Mul(_, _)
-            | Binary::Div(_, _)
-            | Binary::Eq(_, _)
-            | Binary::Ne(_, _)
-            | Binary::Gte(_, _)
-            | Binary::Gt(_, _)
-            | Binary::Lt(_, _)
-            | Binary::Lte(_, _) => Type::Bool,
+            Binary::Div(left_expr, right_expr)
+            | Binary::Lte(left_expr, right_expr)
+            | Binary::Gte(left_expr, right_expr)
+            | Binary::Eq(left_expr, right_expr)
+            | Binary::Ne(left_expr, right_expr)
+            | Binary::Gt(left_expr, right_expr)
+            | Binary::Lt(left_expr, right_expr)
+            | Binary::Sub(left_expr, right_expr)
+            | Binary::Mul(left_expr, right_expr)
+            | Binary::Add(left_expr, right_expr) => {
+                let left: Type = self.expr_to_value(left_expr).into();
+                let right: Type = self.expr_to_value(right_expr).into();
+                if left == right && left == Type::Number {
+                    Type::Bool
+                } else {
+                    Type::Invalid
+                }
+            }
         }
     }
 
-    fn unary_op_to_type(&self, unary_op: Unary) -> Type {
+    fn unary_op_to_type(&mut self, unary_op: Unary) -> Type {
         match unary_op {
-            Unary::Plus(expr) => match expr {
-                Expr::Op(op) => match *op {
-                    Op::Unary(unary) => match unary {
-                        Unary::Plus(_) | Unary::Minus(_) => Type::Number,
-                    },
-                    Op::Binary(binary) => self.bin_op_to_type(binary),
-                },
-                Expr::Value(v) => v.into(),
-                Expr::GetVar(name) => self.get_var(&name).into(),
-                Expr::Fn(_, _, t) => t,
-                Expr::Expr(expr) => self.expr_to_value(*expr).into(),
-                Expr::SetVar(_, _) => todo!(),
-            },
-            Unary::Minus(expr) => match expr {
-                Expr::Op(op) => match *op {
-                    Op::Unary(unary) => match unary {
-                        Unary::Plus(_) | Unary::Minus(_) => Type::Number,
-                    },
-                    Op::Binary(binary) => self.bin_op_to_type(binary),
-                },
-                Expr::Value(v) => v.into(),
-                Expr::GetVar(name) => self.get_var(&name).into(),
-                Expr::Fn(_, _, t) => t,
-                Expr::Expr(expr) => self.expr_to_value(*expr).into(),
-                Expr::SetVar(_, _) => todo!(),
-            },
+            Unary::Plus(expr) => self.expr_to_type(expr),
+            Unary::Minus(expr) => self.expr_to_type(expr),
         }
     }
 
-    fn op_to_type(&self, op: Op) -> Type {
+    fn op_to_type(&mut self, op: Op) -> Type {
         match op {
             Op::Unary(unary) => self.unary_op_to_type(unary),
             Op::Binary(binary) => self.bin_op_to_type(binary),
         }
     }
 
-    fn expr_to_type(&self, expr: Expr) -> Type {
+    fn expr_to_type(&mut self, expr: Expr) -> Type {
         match expr {
             Expr::Fn(_, _, t) => t,
             Expr::Op(op) => self.op_to_type(*op),
@@ -168,22 +155,17 @@ impl Program {
     fn get_var(&self, name: &str) -> Value {
         self.env
             .get(name)
-            .unwrap_or_else(|| panic!("Could not find var: {}", name))
+            .unwrap_or_else(|| panic!("Could not find variable {}", name))
+    }
+
+    fn set_var(&mut self, name: &str, val: Value) -> Value {
+        self.env.set(name, val.clone());
+        val
     }
 
     pub fn check(&mut self) -> bool {
-        for expr in &self.body {
-            let typ = match expr {
-                Expr::Op(op) => self.op_to_type(*op.clone()),
-                Expr::Value(value) => Type::from(value.clone()),
-                Expr::SetVar(name, v) => {
-                    self.env.set(name, *v.clone());
-                    Type::from(*v.clone())
-                }
-                Expr::GetVar(name) => self.get_var(name).into(),
-                Expr::Fn(_, _, t) => t.clone(),
-                Expr::Expr(expr) => self.expr_to_type(*expr.clone()),
-            };
+        for expr in self.body.clone() {
+            let typ = self.expr_to_type(expr);
             if typ == Type::Invalid {
                 return false;
             }
@@ -264,22 +246,5 @@ impl From<Value> for f64 {
             Value::Number(n) => n,
             _ => panic!("Could not convert to f64"),
         }
-    }
-}
-
-trait SumValue {
-    fn sum(&self) -> f64;
-}
-
-impl SumValue for Vec<Value> {
-    fn sum(&self) -> f64 {
-        let mut res = 0.0;
-        for item in self {
-            match item {
-                Value::Number(n) => res += n,
-                _ => panic!("Into on wrong type"),
-            }
-        }
-        res
     }
 }
